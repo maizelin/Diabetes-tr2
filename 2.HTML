@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>糖尿病用藥決策支援系統</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: 'Microsoft JhengHei', Arial, sans-serif; background: #f0f4f8; margin: 0; padding: 20px; }
+    .container { max-width: 1100px; margin: auto; }
+    h1 { text-align: center; color: #2c3e50; }
+    .patient-selector { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; margin-bottom: 40px; }
+    .patient-card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); cursor: pointer; transition: 0.3s; }
+    .patient-card:hover { transform: translateY(-5px); box-shadow: 0 10px 25px rgba(0,0,0,0.15); }
+    .patient-card h3 { margin: 0 0 10px 0; color: #3498db; }
+    .patient-card p { margin: 5px 0; color: #555; }
+    .selected { border: 3px solid #3498db; }
+    .content { display: none; background: white; border-radius: 12px; padding: 30px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); position: relative; }
+    .back-btn {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 1em;
+      cursor: pointer;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+      transition: 0.3s;
+    }
+    .back-btn:hover { background: #2980b9; transform: translateY(-2px); }
+    canvas { max-height: 350px; }
+    .indicators { display: flex; justify-content: space-around; flex-wrap: wrap; gap: 20px; margin: 30px 0; }
+    .indicator { text-align: center; }
+    .bar { height: 40px; border-radius: 8px; line-height: 40px; color: white; font-weight: bold; font-size: 1.2em; text-shadow: 1px 1px 2px black; }
+    .green { background: #27ae60; }
+    .yellow { background: #f39c12; }
+    .red { background: #e74c3c; }
+    .recommendations { margin-top: 30px; }
+    .rec-item { background: #f8f9fa; padding: 15px; border-left: 5px solid #3498db; margin: 10px 0; border-radius: 6px; }
+    .rec-high { border-left-color: #e74c3c; background: #fdf2f2; }
+    footer { text-align: center; margin-top: 50px; color: #95a5a6; font-size: 0.9em; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>糖尿病用藥決策支援系統</h1>
+    <p style="text-align:center; color:#7f8c8d;">基於 ADA 2025 指引 • 個人化用藥建議</p>
+
+    <h2 style="color:#2c3e50;">請選擇測試個案</h2>
+    <div class="patient-selector" id="patientSelector"></div>
+
+    <div class="content" id="patientContent">
+      <button class="back-btn" onclick="backToSelector()">← 返回個案選擇</button>
+
+      <h2 id="patientName" style="margin-left:40px;"></h2>
+      <p id="patientInfo" style="margin-left:40px;"></p>
+
+      <h3 style="margin-left:40px;">兩年 HbA1c 趨勢</h3>
+      <canvas id="hba1cChart"></canvas>
+
+      <h3 style="margin-left:40px;">臨床指標（最新值）</h3>
+      <div class="indicators" id="indicators"></div>
+
+      <h3 style="margin-left:40px;">ADA 2025 個人化用藥建議</h3>
+      <div class="recommendations" id="recommendations"></div>
+    </div>
+  </div>
+
+  <footer>測試資料來源：THAS FHIR Sandbox • 2025-12-28 • 僅供教育與展示用途</footer>
+
+  <script>
+    // === 5 位測試病人完整內建資料 ===
+    const patients = [
+      {
+        id: "683785",
+        name: "陳志明",
+        gender: "男",
+        birthDate: "1980-01-01",
+        age: 45,
+        scenario: "年輕新診斷，快速改善",
+        target: 7.0,
+        latestHba1c: 7.1,
+        egfr: 90,
+        bmi: 27,
+        hba1cSeries: [9.5,9.3,9.0,8.8,8.5,8.3,8.1,8.0,7.9,7.8,7.7,7.6,7.5,7.4,7.3,7.3,7.2,7.2,7.1,7.1,7.1,7.1,7.1,7.1,7.1]
+      },
+      {
+        id: "683813",
+        name: "王小明",
+        gender: "男",
+        birthDate: "1963-01-01",
+        age: 62,
+        scenario: "糖尿病合併中度腎病變",
+        target: 7.5,
+        latestHba1c: 7.6,
+        egfr: 45,
+        bmi: 26,
+        hba1cSeries: [8.5,8.4,8.3,8.2,8.1,8.0,7.9,7.9,7.8,7.8,7.7,7.7,7.7,7.7,7.6,7.6,7.6,7.6,7.6,7.6,7.6,7.6,7.6,7.6,7.6]
+      },
+      {
+        id: "683847",
+        name: "林阿花",
+        gender: "女",
+        birthDate: "1960-05-15",
+        age: 65,
+        scenario: "高齡多共病，目標放寬",
+        target: 8.0,
+        latestHba1c: 7.5,
+        egfr: 55,
+        bmi: 22,
+        hba1cSeries: [7.8,7.7,7.6,7.7,7.5,7.6,7.8,7.7,7.6,7.5,7.6,7.7,7.5,7.6,7.4,7.5,7.6,7.7,7.6,7.5,7.6,7.7,7.5,7.6,7.5]
+      },
+      {
+        id: "683882",
+        name: "張家豪",
+        gender: "男",
+        birthDate: "1985-03-20",
+        age: 40,
+        scenario: "年輕肥胖，反彈後明顯改善",
+        target: 7.0,
+        latestHba1c: 6.1,
+        egfr: 95,
+        bmi: 33,
+        hba1cSeries: [9.2,9.0,8.7,8.5,8.2,8.0,7.8,7.9,7.7,7.5,7.3,7.1,6.9,6.8,6.7,6.6,6.5,6.4,6.3,6.2,6.2,6.1,6.1,6.1,6.1]
+      },
+      {
+        id: "684487",
+        name: "李怡君",
+        gender: "女",
+        birthDate: "1973-08-10",
+        age: 52,
+        scenario: "控制良好，可考慮減藥",
+        target: 7.0,
+        latestHba1c: 5.8,
+        egfr: 100,
+        bmi: 21,
+        hba1cSeries: [6.8,6.7,6.6,6.5,6.4,6.3,6.2,6.1,6.0,6.0,5.9,5.9,5.9,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8]
+      }
+    ];
+
+    // 生成病人選擇卡片
+    const selector = document.getElementById("patientSelector");
+    patients.forEach((p, index) => {
+      const card = document.createElement("div");
+      card.className = "patient-card";
+      card.innerHTML = `
+        <h3>${p.name}</h3>
+        <p><strong>性別：</strong>${p.gender}　<strong>年齡：</strong>${p.age}歲</p>
+        <p><strong>臨床情境：</strong>${p.scenario}</p>
+        <p><strong>個人化目標：</strong>HbA1c ≤ ${p.target}%</p>
+      `;
+      card.onclick = () => selectPatient(p, index);
+      selector.appendChild(card);
+    });
+
+    let currentPatient = null;
+    let chart = null;
+
+    function selectPatient(patient, index) {
+      // 高亮選中
+      document.querySelectorAll(".patient-card").forEach(c => c.classList.remove("selected"));
+      document.querySelectorAll(".patient-card")[index].classList.add("selected");
+
+      currentPatient = patient;
+
+      document.getElementById("patientName").textContent = `${patient.name} 的用藥決策報告`;
+      document.getElementById("patientInfo").innerHTML = `
+        年齡：${patient.age}歲　|　性別：${patient.gender}　|　臨床情境：${patient.scenario}
+      `;
+
+      // 繪製 HbA1c 趨勢圖
+      if (chart) chart.destroy();
+      const ctx = document.getElementById("hba1cChart").getContext("2d");
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: Array.from({length: 25}, (_, i) => {
+            const year = 2023 + Math.floor(i / 12);
+            const month = (i % 12) + 1;
+            return `${year}-${month.toString().padStart(2, '0')}`;
+          }),
+          datasets: [{
+            label: 'HbA1c (%)',
+            data: patient.hba1cSeries,
+            borderColor: '#3498db',
+            backgroundColor: 'rgba(52, 152, 219, 0.1)',
+            tension: 0.3,
+            fill: true
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: { y: { suggestedMin: 5, suggestedMax: 10 } }
+        }
+      });
+
+      // 指標色塊
+      const indicators = document.getElementById("indicators");
+      indicators.innerHTML = `
+        <div class="indicator">
+          <div class="bar ${patient.latestHba1c <= patient.target ? 'green' : patient.latestHba1c <= patient.target + 0.5 ? 'yellow' : 'red'}">
+            HbA1c ${patient.latestHba1c}%
+          </div>
+          <p>目標 ≤ ${patient.target}%</p>
+        </div>
+        <div class="indicator">
+          <div class="bar ${patient.egfr >= 90 ? 'green' : patient.egfr >= 60 ? 'yellow' : 'red'}">
+            eGFR ${patient.egfr}
+          </div>
+          <p>mL/min/1.73m²</p>
+        </div>
+        <div class="indicator">
+          <div class="bar ${patient.bmi < 24 ? 'green' : patient.bmi < 27 ? 'yellow' : 'red'}">
+            BMI ${patient.bmi}
+          </div>
+          <p>kg/m²</p>
+        </div>
+      `;
+
+      // 用藥建議
+      const recs = document.getElementById("recommendations");
+      let items = [];
+      items.push(`<div class="rec-item">最新 HbA1c：${patient.latestHba1c}%（個人化目標 ≤${patient.target}%）</div>`);
+
+      if (patient.scenario.includes("腎病變") || patient.egfr < 60) {
+        items.push(`<div class="rec-item rec-high">🛡️ 合併腎病變：強烈建議使用 SGLT2i（腎保護效益）</div>`);
+      }
+      if (patient.scenario.includes("肥胖") || patient.bmi >= 30) {
+        items.push(`<div class="rec-item rec-high">⚖ 肥胖為主要問題：優先考慮 GLP-1 RA（減重效果佳）</div>`);
+      }
+      if (patient.scenario.includes("高齡") || patient.age >= 65) {
+        items.push(`<div class="rec-item rec-high">👵 高齡患者：避免易引起低血糖藥物（如 Sulfonylurea、Insulin），目標放寬</div>`);
+      }
+      if (patient.scenario.includes("控制良好") && patient.latestHba1c <= 6.5) {
+        items.push(`<div class="rec-item" style="border-left-color:#27ae60;background:#f0fff4;">✅ 控制極佳，可考慮減藥或去階梯化（de-prescribing）</div>`);
+      }
+      if (patient.scenario.includes("快速改善") || patient.scenario.includes("明顯改善")) {
+        items.push(`<div class="rec-item" style="border-left-color:#27ae60;background:#f0fff4;">📈 治療效果顯著，持續目前方案並定期追蹤</div>`);
+      }
+
+      recs.innerHTML = items.join("");
+
+      document.getElementById("patientContent").style.display = "block";
+      window.scrollTo({ top: document.getElementById("patientContent").offsetTop - 20, behavior: 'smooth' });
+    }
+
+    // 新增：返回選擇頁面函數
+    function backToSelector() {
+      document.getElementById("patientContent").style.display = "none";
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  </script>
+</body>
+</html>
